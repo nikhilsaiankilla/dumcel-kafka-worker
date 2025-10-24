@@ -1,6 +1,8 @@
 import { getClickhouseClient, getKafkaClient, connectMongo } from "./initClients";
 import { initKafkaConsumer } from "./consumer";
 import { connectDb } from "./connectDb";
+import dotenv from "dotenv";
+dotenv.config();
 
 async function main() {
     await connectDb();

@@ -1,8 +1,6 @@
 import { Kafka } from "kafkajs";
 import { ClickHouseClient, createClient } from "@clickhouse/client";
 import mongoose from "mongoose";
-import dotenv from "dotenv";
-dotenv.config();
 
 let clickhouseClient: ClickHouseClient | null = null;
 export const getClickhouseClient = (): ClickHouseClient => {

@@ -9,7 +9,7 @@ export async function connectDb(): Promise<void> {
     }
 
     try {
-        if (!(process.env.MONGO_DB_URI)) {
+        if (!process.env.MONGO_DB_URI) {
             throw new Error("MongoDB URI is not defined in secrets");
         }
 
