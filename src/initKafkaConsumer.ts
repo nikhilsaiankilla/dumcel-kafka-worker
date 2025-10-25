@@ -1,10 +1,18 @@
-import { Kafka, EachBatchPayload } from "kafkajs";
+import { Kafka } from "kafkajs";
+import { createClient, InsertResult, DataFormat } from "@clickhouse/client";
 import { v4 } from "uuid";
-import { ClickHouseClient, createClient } from "@clickhouse/client";
 import { DeploymentModel, DeploymentState } from "./model/deployment.model";
 
 /** ---------------- ClickHouse Client ---------------- **/
-let clickhouseClient: ClickHouseClient | null = null;
+export interface ClickHouseClient {
+    insert(options: {
+        table: string;
+        values: Record<string, unknown>[];
+        format?: DataFormat;
+    }): Promise<InsertResult>;
+}
+
+let clickhouseClient: ClickHouseClient | undefined;
 
 export const getClickhouseClient = (): ClickHouseClient => {
     if (clickhouseClient) return clickhouseClient;
@@ -18,37 +26,109 @@ export const getClickhouseClient = (): ClickHouseClient => {
         throw new Error("Missing ClickHouse configuration.");
     }
 
-    clickhouseClient = createClient({ url, database, username, password });
+    const client = createClient({ url, database, username, password });
+
+    clickhouseClient = {
+        insert: async ({ table, values, format = "JSONEachRow" }) => {
+            return client.insert({ table, values, format });
+        },
+    };
+
     return clickhouseClient;
 };
 
 /** ---------------- Kafka Client ---------------- **/
-let kafka: Kafka | null = null;
+export interface KafkaClient {
+    consumer(options: { groupId: string }): Consumer;
+}
 
-export const getKafkaClient = (): Kafka => {
-    if (kafka) return kafka;
+export interface Consumer {
+    connect(): Promise<void>;
+    subscribe(options: { topic: string; fromBeginning: boolean }): Promise<void>;
+    run(options: { eachBatch: (payload: EachBatchPayload) => Promise<void> }): Promise<void>;
+}
+
+let kafkaClientInstance: KafkaClient | undefined;
+
+export const getKafkaClient = (): KafkaClient => {
+    if (kafkaClientInstance) return kafkaClientInstance;
 
     const broker = process.env.KAFKA_BROKER;
     const ca = process.env.KAFKA_CA_CERTIFICATE;
     const username = process.env.KAFKA_USER_NAME;
     const password = process.env.KAFKA_PASSWORD;
 
-    if (!broker || !ca || !username || !password)
+    if (!broker || !ca || !username || !password) {
         throw new Error("Missing Kafka configuration.");
+    }
 
-    kafka = new Kafka({
+    const kafka = new Kafka({
         clientId: "api-server",
         brokers: broker.split(","),
         ssl: { rejectUnauthorized: false, ca: ca.split("\n").filter(Boolean) },
         sasl: { mechanism: "plain", username, password },
     });
 
-    return kafka;
+    kafkaClientInstance = {
+        consumer: (options) => kafka.consumer(options),
+    };
+
+    return kafkaClientInstance;
 };
 
+/** ---------------- Kafka Types ---------------- **/
+interface Message {
+    value: Buffer | string | null;
+    key?: Buffer | string | null;
+    offset: string;
+}
+
+interface LogPayload {
+    PROJECT_ID: string;
+    DEPLOYMENT_ID: string;
+    log: string | object;
+    type?: string;
+    step?: string;
+    meta?: Record<string, unknown>;
+}
+
+interface DeploymentStatusPayload {
+    DEPLOYMENT_ID: string;
+    STATUS: string;
+}
+
+interface AnalyticsPayload {
+    projectId: string;
+    subDomain: string;
+    ip: string;
+    country: string;
+    latitude?: number;
+    longitude?: number;
+    timestamp: string;
+    referrer?: string;
+    deviceType?: string;
+    browser?: string;
+    os?: string;
+    acceptLanguage?: string;
+    userAgent?: string;
+    authorization?: string;
+}
+
+interface Batch {
+    messages: Message[];
+}
+
+import { EachBatchPayload as KafkaEachBatchPayload } from 'kafkajs';
+
+interface EachBatchPayload extends Omit<KafkaEachBatchPayload, 'batch'> {
+    batch: Batch;
+}
 
 /** ---------------- Kafka Consumer ---------------- **/
-export async function initKafkaConsumer(kafkaClient: Kafka, clickhouseClient: ClickHouseClient) {
+export async function initKafkaConsumer(
+    kafkaClient: KafkaClient,
+    clickhouseClient: ClickHouseClient
+) {
     const consumer = kafkaClient.consumer({ groupId: "api-server-logs-consumer" });
 
     await consumer.connect();
@@ -57,21 +137,15 @@ export async function initKafkaConsumer(kafkaClient: Kafka, clickhouseClient: Cl
     await consumer.subscribe({ topic: "project-analytics", fromBeginning: false });
 
     await consumer.run({
-        eachBatch: async ({
-            batch,
-            heartbeat,
-            commitOffsetsIfNecessary,
-            resolveOffset,
-        }: EachBatchPayload) => {
+        eachBatch: async ({ batch, heartbeat, commitOffsetsIfNecessary, resolveOffset }: EachBatchPayload) => {
             for (const message of batch.messages) {
-                const value = message.value?.toString();
                 const key = message.key?.toString();
-
-                if (!value) continue;
+                const valueStr = message.value?.toString();
+                if (!valueStr) continue;
 
                 try {
                     if (key === "log") {
-                        const { PROJECT_ID, DEPLOYMENT_ID, log, type = "INFO", step = "general", meta = {} } = JSON.parse(value);
+                        const payload = JSON.parse(valueStr) as LogPayload;
 
                         await clickhouseClient.insert({
                             table: "log_events",
@@ -79,58 +153,60 @@ export async function initKafkaConsumer(kafkaClient: Kafka, clickhouseClient: Cl
                                 {
                                     event_id: v4(),
                                     timestamp: new Date().toISOString().slice(0, 19).replace("T", " "),
-                                    deployment_id: DEPLOYMENT_ID,
-                                    log: typeof log === "string" ? log : JSON.stringify(log),
-                                    metadata: JSON.stringify({ project_id: PROJECT_ID, type, step, ...meta }),
+                                    deployment_id: payload.DEPLOYMENT_ID,
+                                    log: typeof payload.log === "string" ? payload.log : JSON.stringify(payload.log),
+                                    metadata: JSON.stringify({
+                                        project_id: payload.PROJECT_ID,
+                                        type: payload.type || "INFO",
+                                        step: payload.step || "general",
+                                        ...payload.meta,
+                                    }),
                                 },
                             ],
-                            format: "JSONEachRow" as const, // 👈 type-safe
+                            format: "JSONEachRow",
                         });
                     } else if (key === "deployment-status") {
-                        const { DEPLOYMENT_ID, STATUS } = JSON.parse(value);
+                        const { DEPLOYMENT_ID, STATUS } = JSON.parse(valueStr) as DeploymentStatusPayload;
 
-                        let DEPLOYMENT_STATUS = DeploymentState.QUEUED;
-                        if (STATUS === "failed") DEPLOYMENT_STATUS = DeploymentState.FAILED;
-                        else if (STATUS === "success") DEPLOYMENT_STATUS = DeploymentState.READY;
-                        else if (STATUS === "in_progress") DEPLOYMENT_STATUS = DeploymentState.IN_PROGRESS;
+                        let state = DeploymentState.QUEUED;
+                        if (STATUS === "failed") state = DeploymentState.FAILED;
+                        else if (STATUS === "success") state = DeploymentState.READY;
+                        else if (STATUS === "in_progress") state = DeploymentState.IN_PROGRESS;
 
-                        await DeploymentModel.findByIdAndUpdate(
-                            { _id: DEPLOYMENT_ID },
-                            { $set: { state: DEPLOYMENT_STATUS } }
-                        );
+                        await DeploymentModel.findByIdAndUpdate({ _id: DEPLOYMENT_ID }, { $set: { state } });
                     } else if (key === "analytics") {
-                        const analytics = JSON.parse(value);
+                        const payload = JSON.parse(valueStr) as AnalyticsPayload;
 
                         await clickhouseClient.insert({
                             table: "project_analytics",
                             values: [
                                 {
                                     event_id: v4(),
-                                    timestamp: new Date(analytics.timestamp).toISOString().slice(0, 19).replace("T", " "),
-                                    project_id: analytics.projectId,
-                                    sub_domain: analytics.subDomain,
-                                    ip: analytics.ip,
-                                    country: analytics.country,
-                                    latitude: analytics.latitude,
-                                    longitude: analytics.longitude,
-                                    referrer: analytics.referrer,
-                                    device_type: analytics.deviceType,
-                                    browser: analytics.browser,
-                                    os: analytics.os,
-                                    accept_language: analytics.acceptLanguage,
-                                    user_agent: analytics.userAgent,
-                                    authorization: analytics.authorization,
+                                    timestamp: new Date(payload.timestamp).toISOString().slice(0, 19).replace("T", " "),
+                                    project_id: payload.projectId,
+                                    sub_domain: payload.subDomain,
+                                    ip: payload.ip,
+                                    country: payload.country,
+                                    latitude: payload.latitude,
+                                    longitude: payload.longitude,
+                                    referrer: payload.referrer,
+                                    device_type: payload.deviceType,
+                                    browser: payload.browser,
+                                    os: payload.os,
+                                    accept_language: payload.acceptLanguage,
+                                    user_agent: payload.userAgent,
+                                    authorization: payload.authorization,
                                 },
                             ],
-                            format: "JSONEachRow" as const,
+                            format: "JSONEachRow",
                         });
                     }
-
-                    resolveOffset(message.offset);
+                    
                     await commitOffsetsIfNecessary();
+                    resolveOffset(message.offset);
                     await heartbeat();
-                } catch (err) {
-                    console.error("Error processing message:", err);
+                } catch (error) {
+                    console.error("Error processing message:", error);
                 }
             }
         },

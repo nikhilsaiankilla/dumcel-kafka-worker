@@ -20,7 +20,7 @@ export async function initKafkaConsumer(kafkaClient: Kafka, clickhouseClient: Cl
                 const value = message.value?.toString();
                 const key = message.key?.toString();
                 if (!value) continue;
-
+                
                 try {
                     switch (key) {
                         case "log": {
