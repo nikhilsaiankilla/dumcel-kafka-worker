@@ -2,7 +2,9 @@ import { getClickhouseClient, getKafkaClient } from "./initClients";
 import { initKafkaConsumer } from "./consumer";
 import { connectDb } from "./connectDb";
 import dotenv from "dotenv";
-dotenv.config();
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config(); // only load .env locally
+}
 
 async function main() {
     await connectDb();
