@@ -8,6 +8,7 @@ export interface IProject extends Document {
     subDomain: string;
     createdAt: Date;
     updatedAt: Date;
+    favicon? : string;
 }
 
 // Project schema
@@ -34,6 +35,10 @@ const ProjectSchema: Schema<IProject> = new Schema({
         unique: true,
         lowercase: true,
         trim: true,
+    },
+    favicon:{
+        type: String,
+        required: false,
     },
     createdAt: {
         type: Date,

@@ -2,6 +2,7 @@ import { Kafka, EachBatchPayload } from "kafkajs";
 import { v4 } from "uuid";
 import { ClickHouseClient } from "@clickhouse/client";
 import { DeploymentModel, DeploymentState } from "./model/deployment.model";
+import { ProjectModel } from "./model/project.model";
 
 
 export async function initKafkaConsumer(kafkaClient: Kafka, clickhouseClient: ClickHouseClient) {
@@ -20,7 +21,7 @@ export async function initKafkaConsumer(kafkaClient: Kafka, clickhouseClient: Cl
                 const value = message.value?.toString();
                 const key = message.key?.toString();
                 if (!value) continue;
-                
+
                 try {
                     switch (key) {
                         case "log": {
@@ -65,6 +66,10 @@ export async function initKafkaConsumer(kafkaClient: Kafka, clickhouseClient: Cl
                                 format: "JSONEachRow" as const
                             });
                             break;
+                        }
+                        case "favicon": {
+                            const { PROJECT_ID, SRC } = JSON.parse(value);
+                            await ProjectModel.findByIdAndUpdate({ _id: PROJECT_ID }, { $set: { favicon: SRC } });
                         }
                         default:
                             console.warn("Unknown Kafka key:", key);
