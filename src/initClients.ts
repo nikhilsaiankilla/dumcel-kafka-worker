@@ -1,6 +1,5 @@
 import { Kafka } from "kafkajs";
 import { ClickHouseClient, createClient } from "@clickhouse/client";
-import mongoose from "mongoose";
 
 let clickhouseClient: ClickHouseClient | null = null;
 export const getClickhouseClient = (): ClickHouseClient => {
