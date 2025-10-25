@@ -1,9 +1,7 @@
 import { Kafka, EachBatchPayload } from "kafkajs";
 import { v4 } from "uuid";
 import { ClickHouseClient, createClient } from "@clickhouse/client";
-import dotenv from "dotenv";
 import { DeploymentModel, DeploymentState } from "./model/deployment.model";
-dotenv.config();
 
 /** ---------------- ClickHouse Client ---------------- **/
 let clickhouseClient: ClickHouseClient | null = null;

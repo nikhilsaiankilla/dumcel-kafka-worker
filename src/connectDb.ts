@@ -8,6 +8,8 @@ export async function connectDb(): Promise<void> {
         return;
     }
 
+    console.log(process.env.MONGO_DB_URI);
+    
     try {
         if (!process.env.MONGO_DB_URI) {
             throw new Error("MongoDB URI is not defined in secrets");

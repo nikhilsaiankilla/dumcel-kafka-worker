@@ -39,9 +39,3 @@ export const getKafkaClient = (): Kafka => {
 
     return kafkaClient;
 };
-
-export const connectMongo = async () => {
-    if (!process.env.MONGODB_URI) throw new Error("Missing MONGODB_URI");
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log("MongoDB connected");
-};

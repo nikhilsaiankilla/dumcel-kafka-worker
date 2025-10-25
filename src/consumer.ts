@@ -1,7 +1,6 @@
 import { Kafka, EachBatchPayload } from "kafkajs";
 import { v4 } from "uuid";
 import { ClickHouseClient } from "@clickhouse/client";
-import mongoose from "mongoose";
 import { DeploymentModel, DeploymentState } from "./model/deployment.model";
 
 

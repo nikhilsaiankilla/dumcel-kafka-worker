@@ -1,4 +1,4 @@
-import { getClickhouseClient, getKafkaClient, connectMongo } from "./initClients";
+import { getClickhouseClient, getKafkaClient } from "./initClients";
 import { initKafkaConsumer } from "./consumer";
 import { connectDb } from "./connectDb";
 import dotenv from "dotenv";
